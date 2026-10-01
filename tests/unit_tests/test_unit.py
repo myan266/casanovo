@@ -347,6 +347,71 @@ def test_n_workers(monkeypatch):
             assert utils.n_workers() == 0
 
 
+def test_get_report_dict_score_bins():
+    """Count predictions at and above each confidence threshold."""
+    scores = [0.0, 0.5, 0.9, 0.95, 0.98, 0.99, 0.992, 0.995, 0.999, 1.0]
+    results = pd.DataFrame({"sequence": ["AAAA"] * len(scores), "score": scores})
+
+    report = utils._get_report_dict(results)
+
+    assert report["num_spectra"] == 10
+    assert report["score_bins"] == {
+        0.0: 10,
+        0.5: 9,
+        0.9: 8,
+        0.95: 7,
+        0.98: 6,
+        0.99: 5,
+        0.995: 3,
+        0.999: 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("start_time", "end_time", "expected_throughput"),
+    [
+        (0, 10, "Throughput: 0.2 spectra/s"),
+        (None, 10, None),
+        (0, None, None),
+        (0, 0, None),
+        (10, 0, None),
+    ],
+)
+def test_log_annotate_report(
+    caplog, start_time, end_time, expected_throughput
+):
+    """Report unique spectra and guard missing or invalid run times."""
+    predictions = [
+        psm.PepSpecMatch(
+            sequence="AAAA",
+            spectrum_id=("test.mgf", spectrum_id),
+            peptide_score=score,
+            charge=3,
+            calc_mz=100.0,
+            exp_mz=100.0,
+            aa_scores=[0.5] * 4,
+        )
+        for spectrum_id, score in [("0", 0.992), ("0", 0.995), ("1", 0.999)]
+    ]
+
+    with caplog.at_level(logging.INFO, logger="casanovo"):
+        utils.log_annotate_report(
+            predictions, start_time=start_time, end_time=end_time
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Sequenced 2 spectra (3 PSMs)" in messages
+    assert "2 spectra (66.67%) scored ≥ 0.995" in messages
+    assert "1 spectra (33.33%) scored ≥ 0.999" in messages
+    throughput_messages = [
+        message for message in messages if message.startswith("Throughput:")
+    ]
+    if expected_throughput is None:
+        assert throughput_messages == []
+    else:
+        assert throughput_messages == [expected_throughput]
+
+
 def test_split_version():
     """Test that splitting the version number works as expected."""
     version = utils.split_version("2.0.1")

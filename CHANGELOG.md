@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- The end-of-run sequencing report now includes finer score thresholds near 1.0 and throughput in spectra per second, counting distinct spectra and reporting the PSM count separately when multiple matches are returned per spectrum.
 - The number of spectra that receive no prediction because beam search did not return a valid peptide is now counted and logged at the end of a sequencing run.
 
 ### Changed
