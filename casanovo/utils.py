@@ -218,16 +218,18 @@ def log_annotate_report(
         distinct_spectra = len(set(psm.spectrum_id for psm in predictions))
         num_spectra = run_report["num_spectra"]
         if distinct_spectra != num_spectra:
-            logger.info("Sequenced %s spectra (%s PSMs)",
-                distinct_spectra, num_spectra)
+            logger.info(
+                "Sequenced %s spectra (%s PSMs)", distinct_spectra, num_spectra
+            )
         else:
             logger.info("Sequenced %s spectra", num_spectra)
         time_elapsed = 0
         if start_time is not None and end_time is not None:
             time_elapsed = end_time - start_time
         if time_elapsed > 0:
-            logger.info("Throughput: %.1f spectra/s",
-                distinct_spectra / time_elapsed)
+            logger.info(
+                "Throughput: %.1f spectra/s", distinct_spectra / time_elapsed
+            )
         logger.info("Score Distribution:")
         for score, pop in sorted(run_report["score_bins"].items()):
             logger.info(

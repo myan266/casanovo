@@ -350,7 +350,9 @@ def test_n_workers(monkeypatch):
 def test_get_report_dict_score_bins():
     """Count predictions at and above each confidence threshold."""
     scores = [0.0, 0.5, 0.9, 0.95, 0.98, 0.99, 0.992, 0.995, 0.999, 1.0]
-    results = pd.DataFrame({"sequence": ["AAAA"] * len(scores), "score": scores})
+    results = pd.DataFrame(
+        {"sequence": ["AAAA"] * len(scores), "score": scores}
+    )
 
     report = utils._get_report_dict(results)
 
