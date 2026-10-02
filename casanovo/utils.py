@@ -92,7 +92,7 @@ def _get_report_dict(
     Parameters
     ----------
     results_table: pd.DataFrame
-        Parsed spectrum match table.
+        Peptide-spectrum match table, with one row per PSM.
     score_bins: Optional[Iterable[float]], default=None
         Explicit confidence thresholds. By default, use observed score
         cutoffs for the top 100%, 75%, 50%, 25%, 10%, and 1% of PSMs,
@@ -129,7 +129,7 @@ def _get_report_dict(
         for _, score in score_targets
     }
     return {
-        "num_spectra": len(results_table),
+        "num_psms": len(results_table),
         "score_bins": binned_scores,
         "score_targets": score_targets,
         "max_sequence_length": max_pep_len,
@@ -234,7 +234,7 @@ def log_annotate_report(
         )
     else:
         distinct_spectra = len(set(psm.spectrum_id for psm in predictions))
-        num_psms = run_report["num_spectra"]
+        num_psms = run_report["num_psms"]
         if distinct_spectra != num_psms:
             logger.info(
                 "Sequenced %s spectra (%s PSMs)", distinct_spectra, num_psms
@@ -249,12 +249,11 @@ def log_annotate_report(
                 "Throughput: %.2f spectra/s", distinct_spectra / time_elapsed
             )
         logger.info("Score Distribution:")
-        for target, score in run_report["score_targets"]:
-            pop = run_report["score_bins"][score]
+        for score, pop in sorted(run_report["score_bins"].items()):
             logger.info(
-                "%s%s PSMs (%.2f%%) scored ≥ %.6g",
-                f"{target}: " if target else "",
+                "%s %s (%.2f%%) scored ≥ %.6g",
                 pop,
+                "PSM" if pop == 1 else "PSMs",
                 pop / num_psms * 100,
                 score,
             )

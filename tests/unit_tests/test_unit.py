@@ -358,7 +358,7 @@ def test_get_report_dict_score_bins():
         results, score_bins=(0.0, 0.5, 0.9, 0.95, 0.98, 0.99, 0.995, 0.999)
     )
 
-    assert report["num_spectra"] == 10
+    assert report["num_psms"] == 10
     assert report["score_bins"] == {
         0.0: 10,
         0.5: 9,
@@ -396,7 +396,11 @@ def test_log_annotate_report(
             exp_mz=100.0,
             aa_scores=[0.5] * 4,
         )
-        for spectrum_id, score in [("0", 0.992), ("0", 0.995), ("1", 0.999)]
+        for spectrum_id, score in [
+            ("0", 0.992123456),
+            ("0", 0.995),
+            ("1", 0.999),
+        ]
     ]
 
     with caplog.at_level(logging.INFO, logger="casanovo"):
@@ -406,9 +410,13 @@ def test_log_annotate_report(
 
     messages = [record.getMessage() for record in caplog.records]
     assert "Sequenced 2 spectra (3 PSMs)" in messages
-    assert "Top 100% cutoff: 3 PSMs (100.00%) scored ≥ 0.992" in messages
-    assert "Top 50% cutoff: 2 PSMs (66.67%) scored ≥ 0.995" in messages
-    assert "Top 1 PSM cutoff: 1 PSMs (33.33%) scored ≥ 0.999" in messages
+    assert "3 PSMs (100.00%) scored ≥ 0.992123" in messages
+    assert "2 PSMs (66.67%) scored ≥ 0.995" in messages
+    assert "1 PSM (33.33%) scored ≥ 0.999" in messages
+    distribution_messages = [
+        message for message in messages if "scored ≥" in message
+    ]
+    assert len(distribution_messages) == 3
     throughput_messages = [
         message for message in messages if message.startswith("Throughput:")
     ]
