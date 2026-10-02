@@ -19,7 +19,7 @@ import torch
 from . import __version__
 from .data.psm import PepSpecMatch
 
-SCORE_BINS = (0.0, 0.5, 0.9, 0.95, 0.98, 0.99, 0.995, 0.999)
+SCORE_FRACTIONS = (1.0, 0.75, 0.5, 0.25, 0.1, 0.01)
 
 logger = logging.getLogger("casanovo")
 
@@ -84,7 +84,7 @@ def split_version(version: str) -> Tuple[str, str, str]:
 
 
 def _get_report_dict(
-    results_table: pd.DataFrame, score_bins: Iterable[float] = SCORE_BINS
+    results_table: pd.DataFrame, score_bins: Optional[Iterable[float]] = None
 ) -> Optional[Dict]:
     """
     Generate sequencing run report
@@ -93,8 +93,10 @@ def _get_report_dict(
     ----------
     results_table: pd.DataFrame
         Parsed spectrum match table.
-    score_bins: Iterable[float], Optional
-        Confidence scores for creating confidence score distribution.
+    score_bins: Optional[Iterable[float]], default=None
+        Explicit confidence thresholds. By default, use observed score
+        cutoffs for the top 100%, 75%, 50%, 25%, 10%, and 1% of PSMs,
+        plus the highest score. Target counts round up; ties are included.
 
     Returns
     -------
@@ -108,13 +110,28 @@ def _get_report_dict(
     # Mass modifications do not contribute to sequence length.
     pep_lens = results_table["sequence"].apply(len)
     min_pep_len, med_pep_len, max_pep_len = np.quantile(pep_lens, [0, 0.5, 1])
-    # Get binned confidence scores.
+    # Use observed rank cutoffs so thresholds can be used for filtering.
+    if score_bins is None:
+        scores = results_table["score"].sort_values(ascending=False)
+        score_targets = [
+            (
+                f"Top {fraction * 100:g}% cutoff",
+                scores.iloc[int(np.ceil(len(scores) * fraction)) - 1],
+            )
+            for fraction in SCORE_FRACTIONS
+        ]
+        score_targets.append(("Top 1 PSM cutoff", scores.iloc[0]))
+    else:
+        score_targets = [(None, score) for score in sorted(score_bins)]
+
     binned_scores = {
-        score: (results_table["score"] >= score).sum() for score in score_bins
+        score: (results_table["score"] >= score).sum()
+        for _, score in score_targets
     }
     return {
         "num_spectra": len(results_table),
         "score_bins": binned_scores,
+        "score_targets": score_targets,
         "max_sequence_length": max_pep_len,
         "min_sequence_length": min_pep_len,
         "median_sequence_length": med_pep_len,
@@ -178,7 +195,7 @@ def log_annotate_report(
     predictions: List[PepSpecMatch],
     start_time: Optional[float] = None,
     end_time: Optional[float] = None,
-    score_bins: Iterable[float] = SCORE_BINS,
+    score_bins: Optional[Iterable[float]] = None,
     *,
     n_missing_predictions: int = 0,
 ) -> None:
@@ -193,8 +210,9 @@ def log_annotate_report(
         The start time of the sequencing run in seconds since the epoch.
     end_time : Optional[float], default=None
         The end time of the sequencing run in seconds since the epoch.
-    score_bins: Iterable[float], Optional
-        Confidence scores for creating confidence score distribution.
+    score_bins: Optional[Iterable[float]], default=None
+        Explicit confidence thresholds. By default, use dataset-based
+        rank cutoffs, including tied PSMs at each cutoff.
     n_missing_predictions : int, default=0
         The number of spectra that did not receive a prediction because
         beam search did not return a valid peptide.
@@ -216,26 +234,28 @@ def log_annotate_report(
         )
     else:
         distinct_spectra = len(set(psm.spectrum_id for psm in predictions))
-        num_spectra = run_report["num_spectra"]
-        if distinct_spectra != num_spectra:
+        num_psms = run_report["num_spectra"]
+        if distinct_spectra != num_psms:
             logger.info(
-                "Sequenced %s spectra (%s PSMs)", distinct_spectra, num_spectra
+                "Sequenced %s spectra (%s PSMs)", distinct_spectra, num_psms
             )
         else:
-            logger.info("Sequenced %s spectra", num_spectra)
+            logger.info("Sequenced %s spectra", distinct_spectra)
         time_elapsed = 0
         if start_time is not None and end_time is not None:
             time_elapsed = end_time - start_time
         if time_elapsed > 0:
             logger.info(
-                "Throughput: %.1f spectra/s", distinct_spectra / time_elapsed
+                "Throughput: %.2f spectra/s", distinct_spectra / time_elapsed
             )
         logger.info("Score Distribution:")
-        for score, pop in sorted(run_report["score_bins"].items()):
+        for target, score in run_report["score_targets"]:
+            pop = run_report["score_bins"][score]
             logger.info(
-                "%s spectra (%.2f%%) scored ≥ %.3f",
+                "%s%s PSMs (%.2f%%) scored ≥ %.6g",
+                f"{target}: " if target else "",
                 pop,
-                pop / num_spectra * 100,
+                pop / num_psms * 100,
                 score,
             )
 

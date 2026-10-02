@@ -354,7 +354,9 @@ def test_get_report_dict_score_bins():
         {"sequence": ["AAAA"] * len(scores), "score": scores}
     )
 
-    report = utils._get_report_dict(results)
+    report = utils._get_report_dict(
+        results, score_bins=(0.0, 0.5, 0.9, 0.95, 0.98, 0.99, 0.995, 0.999)
+    )
 
     assert report["num_spectra"] == 10
     assert report["score_bins"] == {
@@ -372,7 +374,8 @@ def test_get_report_dict_score_bins():
 @pytest.mark.parametrize(
     ("start_time", "end_time", "expected_throughput"),
     [
-        (0, 10, "Throughput: 0.2 spectra/s"),
+        (0, 10, "Throughput: 0.20 spectra/s"),
+        (0, 100, "Throughput: 0.02 spectra/s"),
         (None, 10, None),
         (0, None, None),
         (0, 0, None),
@@ -403,8 +406,9 @@ def test_log_annotate_report(
 
     messages = [record.getMessage() for record in caplog.records]
     assert "Sequenced 2 spectra (3 PSMs)" in messages
-    assert "2 spectra (66.67%) scored ≥ 0.995" in messages
-    assert "1 spectra (33.33%) scored ≥ 0.999" in messages
+    assert "Top 100% cutoff: 3 PSMs (100.00%) scored ≥ 0.992" in messages
+    assert "Top 50% cutoff: 2 PSMs (66.67%) scored ≥ 0.995" in messages
+    assert "Top 1 PSM cutoff: 1 PSMs (33.33%) scored ≥ 0.999" in messages
     throughput_messages = [
         message for message in messages if message.startswith("Throughput:")
     ]
@@ -412,6 +416,43 @@ def test_log_annotate_report(
         assert throughput_messages == []
     else:
         assert throughput_messages == [expected_throughput]
+
+
+def test_get_report_dict_rank_cutoffs():
+    """Default cutoffs retain the requested fractions of ranked PSMs."""
+    results = pd.DataFrame(
+        {"sequence": ["AAAA"] * 200, "score": np.arange(200) / 200}
+    )
+    report = utils._get_report_dict(results)
+    assert report["score_targets"] == [
+        ("Top 100% cutoff", 0.0),
+        ("Top 75% cutoff", 0.25),
+        ("Top 50% cutoff", 0.5),
+        ("Top 25% cutoff", 0.75),
+        ("Top 10% cutoff", 0.9),
+        ("Top 1% cutoff", 0.99),
+        ("Top 1 PSM cutoff", 0.995),
+    ]
+    assert report["score_bins"] == {
+        0.0: 200,
+        0.25: 150,
+        0.5: 100,
+        0.75: 50,
+        0.9: 20,
+        0.99: 2,
+        0.995: 1,
+    }
+
+
+@pytest.mark.parametrize("scores", [[0.42], [0.42, 0.42, 0.42]])
+def test_get_report_dict_rank_cutoffs_ties(scores):
+    """Keep every target for small datasets and count all tied scores."""
+    report = utils._get_report_dict(
+        pd.DataFrame({"sequence": ["AAAA"] * len(scores), "score": scores})
+    )
+    assert len(report["score_targets"]) == 7
+    assert all(score == 0.42 for _, score in report["score_targets"])
+    assert report["score_bins"] == {0.42: len(scores)}
 
 
 def test_split_version():
