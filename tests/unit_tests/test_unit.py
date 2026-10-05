@@ -410,11 +410,18 @@ def test_log_annotate_report(
 
     messages = [record.getMessage() for record in caplog.records]
     assert "Sequenced 2 spectra (3 PSMs)" in messages
-    assert "3 PSMs (100.00%) scored ≥ 0.992123" in messages
-    assert "2 PSMs (66.67%) scored ≥ 0.995" in messages
-    assert "1 PSM (33.33%) scored ≥ 0.999" in messages
+    assert (
+        "3 PSMs (100.00%) at a score cutoff of approximately 0.992123"
+        in messages
+    )
+    assert (
+        "2 PSMs (66.67%) at a score cutoff of approximately 0.995" in messages
+    )
+    assert (
+        "1 PSM (33.33%) at a score cutoff of approximately 0.999" in messages
+    )
     distribution_messages = [
-        message for message in messages if "scored ≥" in message
+        message for message in messages if "at a score cutoff" in message
     ]
     assert len(distribution_messages) == 3
     throughput_messages = [

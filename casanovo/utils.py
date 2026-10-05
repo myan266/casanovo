@@ -251,7 +251,7 @@ def log_annotate_report(
         logger.info("Score Distribution:")
         for score, pop in sorted(run_report["score_bins"].items()):
             logger.info(
-                "%s %s (%.2f%%) scored ≥ %.6g",
+                "%s %s (%.2f%%) at a score cutoff of approximately %.6g",
                 pop,
                 "PSM" if pop == 1 else "PSMs",
                 pop / num_psms * 100,
