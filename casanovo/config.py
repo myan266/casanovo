@@ -107,6 +107,7 @@ class Config:
         replace_isoleucine_with_leucine=bool,
         massivekb_tokenizer=bool,
         residues=dict,
+        new_token_init=dict,
     )
 
     def __init__(self, config_file: Optional[str] = None):
@@ -138,7 +139,9 @@ class Config:
 
                         warnings.warn(warning_msg, DeprecationWarning)
                 # Check for missing entries in config file.
-                config_missing = self._params.keys() - self._user_config.keys()
+                config_missing = (
+                    self._params.keys() - self._user_config.keys()
+                ) - {"new_token_init"}
                 if len(config_missing) > 0:
                     raise KeyError(
                         "Missing expected config option(s): "
