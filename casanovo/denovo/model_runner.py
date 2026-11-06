@@ -523,9 +523,9 @@ class ModelRunner:
                 weights_only=False,
                 **loaded_model_params,
             )
-            architecture_params = set(model_params.keys()) - set(
-                loaded_model_params.keys()
-            ) - {"tokenizer"}
+            architecture_params = (
+                model_params.keys() - loaded_model_params.keys() - {"tokenizer"}
+            )
             for param in architecture_params:
                 if param not in self.model.hparams:
                     continue

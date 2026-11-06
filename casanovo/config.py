@@ -139,7 +139,9 @@ class Config:
 
                         warnings.warn(warning_msg, DeprecationWarning)
                 # Check for missing entries in config file.
-                config_missing = self._params.keys() - self._user_config.keys()
+                config_missing = (
+                    self._params.keys() - self._user_config.keys()
+                ) - {"new_token_init"}
                 if len(config_missing) > 0:
                     raise KeyError(
                         "Missing expected config option(s): "

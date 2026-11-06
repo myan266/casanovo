@@ -92,6 +92,8 @@ def test_no_model(tiny_config_db, mgf_small, tiny_fasta_file):
 def test_fine_tune_extended_nar_vocab(tmp_path, tiny_config):
     """Remap a checkpoint's embedding, shared CTC head, and mass metadata."""
     config = Config(tiny_config)
+    assert config.new_token_init == {}
+    config.dim_model = 32
     config.n_layers = 2
     config.inter_ctc_layers = [1]
     config.decoder_frames = 8
@@ -137,7 +139,9 @@ def test_fine_tune_extended_nar_vocab(tmp_path, tiny_config):
     assert model.ctc_loss.blank == model.blank_token == len(index) + 1
     assert model.vocab_size == model.blank_token + 1
     assert model.stop_token == index["$"]
-    assert model.token_masses[index[modified]].item() == config.residues[modified]
+    assert (
+        model.token_masses[index[modified]].item() == config.residues[modified]
+    )
     assert model.token_masses[index[nterm]].item() == config.residues[nterm]
     assert index["[Ammonia-loss]-"] in model.neg_mass_idx.tolist()
     assert index[nterm] in model.nterm_idx.tolist()
@@ -160,7 +164,9 @@ def test_fine_tune_extended_nar_vocab(tmp_path, tiny_config):
         "intensity_array": torch.tensor([[0.5, 1.0]]),
         "precursor_mz": torch.tensor([400.0]),
         "precursor_charge": torch.tensor([2]),
-        "seq": torch.tensor([[index[modified], index[nterm], model.stop_token]]),
+        "seq": torch.tensor(
+            [[index[modified], index[nterm], model.stop_token]]
+        ),
     }
     scores, _, intermediate = model._forward_step(
         batch, return_intermediates=True
