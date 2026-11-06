@@ -8,6 +8,7 @@ import depthcharge.tokenizers.peptides
 import numpy as np
 import pytest
 import torch
+from lightning.pytorch import __version__ as lightning_version
 
 from casanovo.config import Config
 from casanovo.data.psm import PepSpecMatch
@@ -86,6 +87,100 @@ def test_no_model(tiny_config_db, mgf_small, tiny_fasta_file):
             runner.db_search(
                 (str(mgf_small),), str(tiny_fasta_file), str(results_path)
             )
+
+
+def test_fine_tune_extended_nar_vocab(tmp_path, tiny_config):
+    """Remap a checkpoint's embedding, shared CTC head, and mass metadata."""
+    config = Config(tiny_config)
+    config.n_layers = 2
+    config.inter_ctc_layers = [1]
+    config.decoder_frames = 8
+    runner = ModelRunner(config=config)
+    runner.initialize_tokenizer()
+    runner.initialize_model(train=True)
+    original = runner.model
+    original_state = original.state_dict()
+    checkpoint = tmp_path / "original.ckpt"
+
+    def save_weights(model, path):
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "hyper_parameters": dict(model.hparams),
+                "pytorch-lightning_version": lightning_version,
+            },
+            path,
+        )
+
+    save_weights(original, checkpoint)
+    modified = "K[TMTplex]"
+    nterm = "[TMTplex]-"
+    config.residues = {
+        **config.residues,
+        modified: 357.257895,
+        nterm: 229.162932,
+    }
+    runner = ModelRunner(config=config, model_filename=str(checkpoint))
+    runner.initialize_tokenizer()
+
+    with pytest.raises(ValueError, match="have no initialization source"):
+        runner.initialize_model(train=True)
+    config.new_token_init = {modified: "nonexistent", nterm: "[Acetyl]-"}
+    with pytest.raises(ValueError, match="not in the checkpoint vocabulary"):
+        runner.initialize_model(train=True)
+    config.new_token_init[modified] = "K"
+    runner.initialize_model(train=True)
+
+    model = runner.model
+    index = runner.tokenizer.index
+    assert model.tokenizer is runner.tokenizer
+    assert model.ctc_loss.blank == model.blank_token == len(index) + 1
+    assert model.vocab_size == model.blank_token + 1
+    assert model.stop_token == index["$"]
+    assert model.token_masses[index[modified]].item() == config.residues[modified]
+    assert model.token_masses[index[nterm]].item() == config.residues[nterm]
+    assert index["[Ammonia-loss]-"] in model.neg_mass_idx.tolist()
+    assert index[nterm] in model.nterm_idx.tolist()
+
+    sources = original.tokenizer.index
+    rows = [0] + [
+        sources[config.new_token_init.get(token, token)]
+        for token in runner.tokenizer.reverse_index[1:]
+    ]
+    for name, tensor in model.state_dict().items():
+        expected = original_state[name]
+        if name == "decoder.token_encoder.weight":
+            expected = expected[rows]
+        elif name in {"decoder.final.weight", "decoder.final.bias"}:
+            expected = expected[rows + [original.blank_token]]
+        torch.testing.assert_close(tensor, expected, atol=0, rtol=0)
+
+    batch = {
+        "mz_array": torch.tensor([[100.0, 200.0]]),
+        "intensity_array": torch.tensor([[0.5, 1.0]]),
+        "precursor_mz": torch.tensor([400.0]),
+        "precursor_charge": torch.tensor([2]),
+        "seq": torch.tensor([[index[modified], index[nterm], model.stop_token]]),
+    }
+    scores, _, intermediate = model._forward_step(
+        batch, return_intermediates=True
+    )
+    assert len(intermediate) == 1
+    assert scores.shape[-1] == intermediate[0].shape[-1] == model.vocab_size
+    with unittest.mock.patch.object(model, "log"):
+        loss = model.training_step(batch)
+    assert torch.isfinite(loss) and loss > 0
+    loss.backward()
+
+    remapped = tmp_path / "remapped.ckpt"
+    save_weights(model, remapped)
+    config.new_token_init = {}
+    runner = ModelRunner(config=config, model_filename=str(remapped))
+    runner.initialize_tokenizer()
+    runner.initialize_model(train=False)
+    assert runner.model.hparams["tokenizer"].index == index
+    for name, tensor in runner.model.state_dict().items():
+        torch.testing.assert_close(tensor, model.state_dict()[name])
 
 
 def test_save_and_load_weights(tmp_path, mgf_small, tiny_config):

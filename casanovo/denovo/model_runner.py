@@ -523,28 +523,20 @@ class ModelRunner:
                 weights_only=False,
                 **loaded_model_params,
             )
-            # Use tokenizer initialized from config file instead of loaded
-            # from checkpoint file.
-            self.model.tokenizer = tokenizer
             architecture_params = set(model_params.keys()) - set(
                 loaded_model_params.keys()
-            )
+            ) - {"tokenizer"}
             for param in architecture_params:
                 if param not in self.model.hparams:
                     continue
                 if model_params[param] != self.model.hparams[param]:
-                    if param == "tokenizer":
-                        self._verify_tokenizer(
-                            model_params[param], self.model.hparams[param]
-                        )
-                    else:
-                        logger.warning(
-                            "Mismatching %s parameter in model checkpoint (%s) vs"
-                            " config file (%s); using the checkpoint.",
-                            param,
-                            self.model.hparams[param],
-                            model_params[param],
-                        )
+                    logger.warning(
+                        "Mismatching %s parameter in model checkpoint (%s) vs"
+                        " config file (%s); using the checkpoint.",
+                        param,
+                        self.model.hparams[param],
+                        model_params[param],
+                    )
         except RuntimeError:
             # This only doesn't work if the weights are from an older
             # version.
@@ -555,12 +547,17 @@ class ModelRunner:
                     weights_only=False,
                     **model_params,
                 )
-                self.model.tokenizer = tokenizer
             except RuntimeError:
                 raise RuntimeError(
                     "Weights file incompatible with the current version of "
                     "Casanovo."
                 )
+
+        if self._verify_tokenizer(self.model.tokenizer, tokenizer):
+            self.model.tokenizer = tokenizer
+            self.model.hparams["tokenizer"] = tokenizer
+        else:
+            self._remap_decoder_vocab(tokenizer)
 
     def initialize_data_module(
         self,
@@ -623,20 +620,65 @@ class ModelRunner:
     @staticmethod
     def _verify_tokenizer(
         checkpoint: PeptideTokenizer, config: PeptideTokenizer
-    ) -> None:
-        """Verify that two tokenizers are equivalent"""
+    ) -> bool:
+        """Check whether two tokenizers have equivalent vocabularies."""
         if checkpoint.residues != config.residues:
             mismatch_reason = "residues and/or residue masses"
         elif checkpoint.index != config.index:
             mismatch_reason = "residue indices"
         else:
-            return
+            return True
 
         logger.warning(
             "Mismatching %s in model checkpoint tokenizer vs config file tokenizer;"
-            " using the checkpoint tokenizer.",
+            " remapping the model to the config tokenizer.",
             mismatch_reason,
         )
+        return False
+
+    def _remap_decoder_vocab(self, tokenizer: PeptideTokenizer) -> None:
+        """Copy checkpoint weights into a model built for the config vocabulary."""
+        model = self.model
+        old_index = model.tokenizer.index
+        new_index = tokenizer.index
+        new_tokens = new_index.keys() - old_index.keys()
+        sources = self.config.new_token_init
+        missing = new_tokens - sources.keys()
+        if missing:
+            raise ValueError(
+                f"New tokens {sorted(missing)} have no initialization source. "
+                "Add entries to 'new_token_init', e.g. {'K[Acetyl]': 'K'}."
+            )
+
+        # Embeddings and logits share the tokenizer rows, including padding.
+        rows = [model.tokenizer.padding_int] * (len(tokenizer) + 1)
+        for token, idx in new_index.items():
+            source = sources[token] if token in new_tokens else token
+            if source not in old_index:
+                raise ValueError(
+                    f"Init source {source!r} for new token {token!r} "
+                    "is not in the checkpoint vocabulary."
+                )
+            rows[idx] = old_index[source]
+
+        state = model.state_dict()
+        # The shared final/intermediate CTC head has one additional blank row.
+        for key, indices in (
+            ("decoder.token_encoder.weight", rows),
+            ("decoder.final.weight", rows + [model.blank_token]),
+            ("decoder.final.bias", rows + [model.blank_token]),
+        ):
+            tensor = state[key]
+            state[key] = tensor.index_select(
+                0, tensor.new_tensor(indices, dtype=torch.long)
+            )
+
+        # The constructor rebuilds CTC loss and mass-control metadata from
+        # the new tokenizer and records it for subsequent checkpoint loads.
+        params = dict(model.hparams, tokenizer=tokenizer)
+        remapped = type(model)(**params)
+        remapped.load_state_dict(state)
+        self.model = remapped
 
     def _get_input_paths(
         self,
